@@ -32,73 +32,41 @@
 ******************************************************************************/
 
 #include <linux/timex.h>
- // avoid indirect inclusion of time.h since this will clash with linux/timex.h
-#define _TIME_H  1
-#define _STRUCT_TIMEVAL 1
-#include <linux_hal_generic.hpp>
 #include <syscall.h>
+#include <unistd.h>
 #include <math.h>
+#include <stdint.h>
 
-bool LinuxTimestamperGeneric::resetFrequencyAdjustment() {
+// we would like to include sys/types.h here for clockid_t, but this
+// also includes sys/time.h, which leads to a type redefinition problem
+// due to a conflict between linux/timex.h and sys/time.h. The workaround
+// we employ here uses the type __clockid_t defined in bits/types.h, which
+// ought to be the same as clockid_t (if it isn't, the linker will
+// complain about the two missing functions)
+#include <bits/types.h>
+
+// resetting frequency adjustment works by passing 0.0 as the offset.
+bool syscallAdjFrequency(__clockid_t clockid, float frequencyOffset) {
 	struct timex tx;
 	tx.modes = ADJ_FREQUENCY;
-	tx.freq = 0;
+	tx.freq = long(frequencyOffset) << 16;
+	tx.freq += long(fmodf(frequencyOffset, 1.0)*65536.0);
 
-	return Adjust(&tx);
+	return syscall(__NR_clock_adjtime, clockid, tx) == 0;
 }
 
-bool LinuxTimestamperGeneric::HWTimestamper_adjclockphase( int64_t phase_adjust ) {
-	struct timex tx;
-	LinuxNetworkInterfaceList::iterator iface_iter;
-	bool ret = true;
-	LinuxTimerFactory factory;
-	OSTimer *timer = factory.createTimer();
-		
-	/* Walk list of interfaces disabling them all */
-	iface_iter = iface_list.begin();
-	for
-		( iface_iter = iface_list.begin(); iface_iter != iface_list.end();
-		  ++iface_iter ) {
-		(*iface_iter)->disable_clear_rx_queue();
-	}
-		
-	rxTimestampList.clear();
-		
-	/* Wait 180 ms - This is plenty of time for any time sync frames
-	   to clear the queue */
-	timer->sleep(180000);
-		
-	++version;
-		
+bool syscallSetOffset(__clockid_t clockid, int64_t phase_adjust) {
+	struct timex tx = { 0 };
 	tx.modes = ADJ_SETOFFSET | ADJ_NANO;
-	if( phase_adjust >= 0 ) {
-		tx.time.tv_sec  = phase_adjust / 1000000000LL;
+	if (phase_adjust >= 0) {
+		tx.time.tv_sec = phase_adjust / 1000000000LL;
 		tx.time.tv_usec = phase_adjust % 1000000000LL;
-	} else {
-		tx.time.tv_sec  = (phase_adjust / 1000000000LL)-1;
-		tx.time.tv_usec = (phase_adjust % 1000000000LL)+1000000000;
+	}
+	else {
+		tx.time.tv_sec = (phase_adjust / 1000000000LL) - 1;
+		tx.time.tv_usec = (phase_adjust % 1000000000LL) + 1000000000;
 	}
 
-	if( !Adjust( &tx )) {
-		ret = false;
-	}
-		
-	// Walk list of interfaces re-enabling them
-	iface_iter = iface_list.begin();
-	for( iface_iter = iface_list.begin(); iface_iter != iface_list.end();
-		 ++iface_iter ) {
-		(*iface_iter)->reenable_rx_queue();
-	}
-	  
-	delete timer;
-	return ret;
-}
-	
-bool LinuxTimestamperGeneric::HWTimestamper_adjclockrate( float freq_offset ) {
-	struct timex tx;
-	tx.modes = ADJ_FREQUENCY;
-	tx.freq  = long(freq_offset) << 16;
-	tx.freq += long(fmodf( freq_offset, 1.0 )*65536.0);
 
-	return Adjust(&tx);
+	return syscall(__NR_clock_adjtime, clockid, tx) == 0;
 }

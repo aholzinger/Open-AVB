@@ -208,14 +208,6 @@ LinuxTimestamperGeneric::LinuxTimestamperGeneric() {
 	sd = -1;
 }
 
-bool LinuxTimestamperGeneric::Adjust( void *tmx ) {
-	if( syscall(__NR_clock_adjtime, _private->clockid, tmx ) != 0 ) {
-		XPTPD_ERROR( "Failed to adjust PTP clock rate" );
-		return false;
-	}
-	return true;
-}
-
 bool LinuxTimestamperGeneric::HWTimestamper_init
 ( InterfaceLabel *iface_label, OSNetworkInterface *iface ) {
 	int fd;
@@ -401,3 +393,50 @@ bool LinuxTimestamperGeneric::HWTimestamper_gettime
 	return ret;
 }
 
+bool LinuxTimestamperGeneric::resetFrequencyAdjustment() {
+	if (syscallAdjFrequency(privateData_->clockid, 0.0))
+		return true;
+
+	XPTPD_ERROR("Failed to reset frequency adjustment");
+	return false;
+}
+
+bool LinuxTimestamperGeneric::adjustClockphase(int64_t phase_adjust) {
+	/* Walk list of interfaces disabling them all */
+	LinuxNetworkInterfaceList::iterator ifaceIter = ifaceList_.begin();
+	for
+		(ifaceIter = ifaceList_.begin(); ifaceIter != ifaceList_.end(); ++ifaceIter) {
+		(*ifaceIter)->disable_clear_rx_queue();
+	}
+
+	rxTimestampList_.clear();
+
+	/* Wait 180 ms - This is plenty of time for any time sync frames
+	to clear the queue */
+	LinuxTimerFactory factory;
+	OSTimer *timer = factory.createTimer();
+	timer->sleep(180000);
+
+	++generation_;
+
+	bool ret = syscallSetOffset(privateData_->clockid, phase_adjust);
+	if (!ret)
+		XPTPD_ERROR("Failed to set clock offset");
+
+	// Walk list of interfaces re-enabling them
+	ifaceIter = ifaceList_.begin();
+	for (ifaceIter = ifaceList_.begin(); ifaceIter != ifaceList_.end(); ++ifaceIter) {
+		(*ifaceIter)->reenable_rx_queue();
+	}
+
+	delete timer;
+	return ret;
+}
+
+bool LinuxTimestamperGeneric::adjustClockrate(float frequencyOffset) {
+	if (syscallAdjFrequency(privateData_->clockid, frequencyOffset))
+		return true;
+
+	XPTPD_ERROR("Failed to adjust clock rate");
+	return false;
+}

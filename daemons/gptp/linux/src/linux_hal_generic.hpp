@@ -63,7 +63,6 @@ private:
 public:
 	LinuxTimestamperGeneric();
 	bool resetFrequencyAdjustment();
-	bool Adjust( void *tmx );
 	virtual bool HWTimestamper_init
 	( InterfaceLabel *iface_label, OSNetworkInterface *iface );
 
@@ -106,5 +105,7 @@ public:
 	virtual ~LinuxTimestamperGeneric();
 };
 
+bool syscallAdjFrequency(clockid_t clockId, float frequencyOffset);
+bool syscallSetOffset(clockid_t clockId, int64_t phaseAdjust);
 
 #endif/*LINUX_HAL_GENERIC_HPP*/
